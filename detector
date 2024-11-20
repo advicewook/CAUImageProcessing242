@@ -1,0 +1,85 @@
+import cv2
+
+# 1. image loading
+image = cv2.imread('/mnt/data/image.jpg')  
+height, width, _ = image.shape
+
+# 2. grayscale 
+gray = [[0 for _ in range(width)] for _ in range(height)]  # 2D 배열 초기화
+for i in range(height):
+    for j in range(width):
+        r, g, b = image[i, j]
+        gray[i][j] = int(0.299 * r + 0.587 * g + 0.114 * b)
+
+# 3. Thresholding
+threshold = 128
+binary = [[0 for _ in range(width)] for _ in range(height)]
+for i in range(height):
+    for j in range(width):
+        binary[i][j] = 255 if gray[i][j] > threshold else 0
+
+# 4. Edge detection
+edges = [[0 for _ in range(width)] for _ in range(height)]
+for i in range(1, height - 1):
+    for j in range(1, width - 1):
+        gx = int(gray[i][j + 1]) - int(gray[i][j - 1])
+        gy = int(gray[i + 1][j]) - int(gray[i - 1][j])
+        gradient = abs(gx) + abs(gy)
+        edges[i][j] = 255 if gradient > 50 else 0
+
+# 5. Flood Fill & Bounding Box 
+visited = [[False for _ in range(width)] for _ in range(height)]
+bounding_boxes = []  
+
+def flood_fill(x, y, bounding_boxes):
+    stack = [[x, y]]  # stack index
+    min_x, max_x, min_y, max_y = x, x, y, y
+    stack_index = 0
+
+    while stack_index < len(stack):
+        cx, cy = stack[stack_index]
+        stack_index += 1
+        if not (0 <= cx < height and 0 <= cy < width):
+            continue
+        if visited[cx][cy] or edges[cx][cy] == 0:
+            continue
+
+        visited[cx][cy] = True
+        min_x, max_x = min(min_x, cx), max(max_x, cx)
+        min_y, max_y = min(min_y, cy), max(max_y, cy)
+
+       
+        stack += [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]
+
+    # store value in Bounding Box
+    if (max_x - min_x > 10) and (max_y - min_y > 10):  # 최소 크기 필터링
+        bounding_boxes += [[min_x, max_x, min_y, max_y]]  # append 대신 += 사용
+
+for i in range(height):
+    for j in range(width):
+        if edges[i][j] == 255 and not visited[i][j]:
+            flood_fill(i, j, bounding_boxes)
+
+# 6. draw rectangle(detection box)
+def draw_rectangle(image, x1, y1, x2, y2, color):
+    for x in range(x1, x2 + 1):
+        if 0 <= y1 < height:
+            image[y1][x] = color
+        if 0 <= y2 < height:
+            image[y2][x] = color
+    for y in range(y1, y2 + 1):
+        if 0 <= x1 < width:
+            image[y][x1] = color
+        if 0 <= x2 < width:
+            image[y][x2] = color
+
+# visualize Bounding Box 
+output = image.copy()
+for bbox in bounding_boxes:
+    min_x, max_x, min_y, max_y = bbox
+    draw_rectangle(output, min_y, min_x, max_y, max_x, [0, 255, 0])
+
+# output
+cv2.imshow('Detected Text', output)  # OpenCV I/O 함수 사용 가능
+cv2.waitKey(0)
+cv2.destroyAllWindows()
