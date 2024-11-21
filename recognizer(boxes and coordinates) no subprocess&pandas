@@ -21,9 +21,11 @@ def custom_threshold(image, threshold=128):
         for x in range(width):
             binary[y, x] = 255 if image[y, x] > threshold else 0
     return binary
+
 def correct_text(text):
     corrected_text = text.replace('|', 'I')  # Replace misinterpreted characters
     return corrected_text
+
 # Function to highlight a specific word and get its coordinates
 def get_word_coordinates(data, word):
     coordinates = []
@@ -36,7 +38,7 @@ def get_word_coordinates(data, word):
     return coordinates
 
 # Load the image using OpenCV
-image = cv2.imread('text_img.jpg')
+image = cv2.imread('text_img2.jpg')
 if image is None:
     raise ValueError("Image not found! Check the file path.")
 
@@ -52,10 +54,10 @@ text = correct_text(raw_text)
 data = pytesseract.image_to_data(binary, output_type='dict')
 
 # Print the full recognized text
-print("Recognized Text:\n",text)
+print("Recognized Text:\n", text)
 
 # Search for a specific word and get its coordinates
-word_to_search = "you"  # Replace with the word you want to find
+word_to_search = "aviation"  # Replace with the word you want to find
 coordinates = get_word_coordinates(data, word_to_search)
 
 # Print the coordinates of the searched word
@@ -64,9 +66,19 @@ if coordinates:
 else:
     print(f"The word '{word_to_search}' was not found in the text.")
 
-# Highlight the found words in the image
+# Padding value to add to each side
+padding = 3  # 3 pixels padding on each side
+
+# Highlight the found words in the image with padding
 for (x, y, w, h) in coordinates:
-    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)  # Draw red box
+    # Add padding around the bounding box
+    x -= padding  # Expand left side
+    y -= padding  # Expand top side
+    w += 2 * padding  # Expand width (padding on both sides)
+    h += 2 * padding  # Expand height (padding on both sides)
+    
+    # Draw the red box with padding
+    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)
 
 # Display the processed image with boxes around the searched word
 cv2.imshow('Highlighted Words', image)
