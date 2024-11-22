@@ -1,0 +1,132 @@
+import cv2
+import pandas as pd
+import subprocess
+
+# Path to Tesseract executable
+pytesseract_tesseract_cmd = r'C:\Users\prant\Documents\School- CAU\Image processing\Assignments\Recognizer\tes\tesseract.exe'
+
+# Function to run Tesseract and generate a .box file
+def run_tesseract(image_path, output_base, config='makebox'):
+    box_file = f"{output_base}.box"
+    command = [
+        pytesseract_tesseract_cmd,
+        image_path,
+        output_base,
+        config
+    ]
+    subprocess.run(command, check=True)
+    return box_file
+
+# Function to parse .box files into a pandas DataFrame
+def parse_boxes(boxes_path):
+    data = []
+    with open(boxes_path, 'r') as file:
+        for line in file:
+            parts = line.split()
+            if len(parts) == 6:
+                data.append({
+                    'char': parts[0],
+                    'left': int(parts[1]),
+                    'bottom': int(parts[2]),
+                    'right': int(parts[3]),
+                    'top': int(parts[4]),
+                    'page_num': int(parts[5])
+                })
+    return pd.DataFrame(data)
+
+# Function to extract character positions using Tesseract's .box output
+def image_to_boxes_dict(image_path):
+    output_base = "output"
+    boxes_path = run_tesseract(image_path, output_base, config='makebox')
+    return parse_boxes(boxes_path)
+
+# Function to replace pytesseract.image_to_data and extract text data
+def custom_image_to_data(image_path):
+    command = [
+        pytesseract_tesseract_cmd,
+        image_path,
+        'stdout',
+        '--psm', '3',  # Page segmentation mode
+        'tsv'  # Get data in TSV format
+    ]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+    tsv_output = result.stdout
+
+    # Parse TSV output into a pandas DataFrame
+    rows = tsv_output.strip().split("\n")
+    header = rows[0].split("\t")
+    data = [dict(zip(header, row.split("\t"))) for row in rows[1:] if len(row.split("\t")) == len(header)]
+    df = pd.DataFrame(data)
+
+    # Convert numeric columns to appropriate types
+    numeric_columns = ['left', 'top', 'width', 'height', 'conf', 'page_num']
+    for col in numeric_columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    return df
+
+# Function to search for a word and get its bounding box from image data
+def get_word_coordinates(data, word):
+    coordinates = []
+    n_boxes = len(data['text'])  # Number of detected elements
+    for i in range(n_boxes):
+        recognized_word = data['text'][i]
+        if recognized_word and word.lower() in recognized_word.lower():
+            x, y, w, h = (data['left'][i], data['top'][i], data['width'][i], data['height'][i])
+            coordinates.append((x, y, w, h))
+    return coordinates
+
+# Load the image using OpenCV
+image_path = 'text_img.jpg'
+image = cv2.imread(image_path)
+if image is None:
+    raise ValueError("Image not found! Check the file path.")
+
+# Extract character-level bounding box data
+box_data = image_to_boxes_dict(image_path)
+
+# Extract text and metadata using custom function
+data = custom_image_to_data(image_path)
+
+# Search for a specific word and get its coordinates
+word_to_search = "you"  # Replace with the word you want to find
+coordinates = get_word_coordinates(data, word_to_search)
+
+# Draw character-level bounding boxes (blue)
+for _, row in box_data.iterrows():
+    x1, y1, x2, y2 = row['left'], row['top'], row['right'], row['bottom']
+    #Adjust y-coordinates because Tesseract uses a bottom-left origin
+    y1_adjusted = image.shape[0] - y1
+    y2_adjusted = image.shape[0] - y2
+    
+    #uncomment this if you want blue boxes around characters
+    #cv2.rectangle(image, (x1, y2_adjusted), (x2, y1_adjusted), (255, 0, 0), 1)
+
+# Padding value to add to each side
+padding = 3  # 3 pixels padding on each side
+
+# Highlight the found words in the image with padding (red)
+for (x, y, w, h) in coordinates:
+    # Adjust coordinates for padding and OpenCV coordinate system
+    x -= padding  # Expand left side
+    y -= padding  # Expand top side
+    w += 2 * padding  # Expand width (padding on both sides)
+    h += 2 * padding  # Expand height (padding on both sides)
+
+    # Draw the red box with padding
+    cv2.rectangle(image, (x, y), (x + w, y + h), (0, 0, 255), 2)
+
+# Print the recognized word coordinates
+if coordinates:
+    formatted_coords = ", ".join(
+        f"[{x},{y},{x+w},{y+h}]" for (x, y, w, h) in coordinates
+    )
+    print(f"Coordinates of '{word_to_search}': {formatted_coords}")
+else:
+    print(f"The word '{word_to_search}' was not found in the text.")
+
+    
+# Display the processed image with both character-level and word-level boxes
+cv2.imshow('Highlighted Words', image)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
