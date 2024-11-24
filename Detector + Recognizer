@@ -87,20 +87,20 @@ def convert_to_grayscale(image):
             grayscale_image[i, j] = (int(b) + int(g) + int(r)) // 3  # Simple average to get grayscale
     return grayscale_image
 
+# gaussian blur 
 def apply_gaussian_blur(image, kernel_size=3, sigma=0.5):
     kernel = np.zeros((kernel_size, kernel_size), dtype=np.float32)
     offset = kernel_size // 2
 
-    # 생성된 커널로 가우시안 값 계산
     for i in range(kernel_size):
         for j in range(kernel_size):
             x = i - offset
             y = j - offset
             kernel[i, j] = np.exp(-(x**2 + y**2) / (2 * sigma**2))
     kernel /= (2 * np.pi * sigma**2)
-    kernel /= np.sum(kernel)  # 정규화
+    kernel /= np.sum(kernel)  
 
-    # 이미지에 커널 적용
+
     height, width = image.shape
     blurred_image = np.zeros_like(image, dtype=np.float32)
     
@@ -111,6 +111,7 @@ def apply_gaussian_blur(image, kernel_size=3, sigma=0.5):
 
     return np.clip(blurred_image, 0, 255).astype(np.uint8)
 
+# morphology
 def erosion(image, kernel_size=2):
     height, width = image.shape
     offset = kernel_size // 2
@@ -141,12 +142,13 @@ def dilation(image, kernel_size=2):
 
     return dilated_image
 
-# 열림 연산: 침식 후 팽창
+
 def opening(image, kernel_size=2):
     eroded = erosion(image, kernel_size)
     opened_image = dilation(eroded, kernel_size)
     return opened_image
 
+# Binarization
 def apply_threshold(image, threshold_value=127):
     height, width = image.shape
     binary_image = np.zeros((height, width), dtype=np.uint8)
@@ -196,7 +198,7 @@ def find_contours(binary_image):
     return contours
 
 # Custom function to draw a rectangle manually
-def draw_rectangle(image, top_left, bottom_right, color=(0, 0, 255), thickness=2):
+def draw_rectangle(image, top_left, bottom_right, color=(0, 0, 255), thickness=1):
     x1, y1 = top_left
     x2, y2 = bottom_right
 
@@ -293,7 +295,7 @@ def apply_custom_canny_edge_detection(image, low_threshold=30, high_threshold=80
     return edges
 
 # Load the image using OpenCV
-image_path = r'C:\Users\homes\Downloads\Sample3.png'
+image_path = r'C:\Users\homes\Downloads\Sample4.png'
 image = cv2.imread(image_path)
 if image is None:
     raise ValueError("Image not found! Check the file path.")
@@ -319,7 +321,7 @@ for contour in contours:
         image[point[1], point[0]] = (255, 255, 255)  # Mark contour points in white
 
 # Save the processed image
-preprocessed_image_path = r'C:\Users\homes\Downloads\preprocessed_image.png'
+preprocessed_image_path = r'C:\Users\homes\Downloads\preprocessed_image.jpg'
 cv2.imwrite(preprocessed_image_path, image)
 
 # Use Tesseract to extract text data without additional internal preprocessing
@@ -330,7 +332,7 @@ box_data = image_to_boxes_dict(preprocessed_image_path)
 data = custom_image_to_data(preprocessed_image_path)
 
 # Search for a specific word and get its coordinates
-word_to_search = "task" # Replace with the word you want to find
+word_to_search = "act" # Replace with the word you want to find
 coordinates = get_word_coordinates(data, word_to_search)
 
 # Draw character-level bounding boxes
