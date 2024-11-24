@@ -1,0 +1,356 @@
+import cv2
+import pandas as pd
+import subprocess
+import numpy as np
+
+# Path to Tesseract executable
+pytesseract_tesseract_cmd = r'C:\Users\homes\Downloads\Recognizer_Files\Recognizer\tes\tesseract.exe'
+
+# Function to run Tesseract and generate a .box file
+def run_tesseract(image_path, output_base, config='makebox'):
+    box_file = f"{output_base}.box"
+    command = [
+        pytesseract_tesseract_cmd,
+        image_path,
+        output_base,
+        config
+    ]
+    subprocess.run(command, check=True)
+    return box_file
+
+# Function to parse .box files into a pandas DataFrame
+def parse_boxes(boxes_path):
+    data = []
+    with open(boxes_path, 'r') as file:
+        for line in file:
+            parts = line.split()
+            if len(parts) == 6:
+                data.append({
+                    'char': parts[0],
+                    'left': int(parts[1]),
+                    'bottom': int(parts[2]),
+                    'right': int(parts[3]),
+                    'top': int(parts[4]),
+                    'page_num': int(parts[5])
+                })
+    return pd.DataFrame(data)
+
+# Function to extract character positions using Tesseract's .box output
+def image_to_boxes_dict(image_path):
+    output_base = "output"
+    boxes_path = run_tesseract(image_path, output_base, config='makebox')
+    return parse_boxes(boxes_path)
+
+# Function to replace pytesseract.image_to_data and extract text data
+def custom_image_to_data(image_path):
+    command = [
+        pytesseract_tesseract_cmd,
+        image_path,
+        'stdout',
+        '--psm', '3',  # Page segmentation mode
+        'tsv'  # Get data in TSV format
+    ]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+    tsv_output = result.stdout
+
+    # Parse TSV output into a pandas DataFrame
+    rows = tsv_output.strip().split("\n")
+    header = rows[0].split("\t")
+    data = [dict(zip(header, row.split("\t"))) for row in rows[1:] if len(row.split("\t")) == len(header)]
+    df = pd.DataFrame(data)
+
+    # Convert numeric columns to appropriate types
+    numeric_columns = ['left', 'top', 'width', 'height', 'conf', 'page_num']
+    for col in numeric_columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    return df
+
+# Function to search for a word and get its bounding box from image data
+def get_word_coordinates(data, word):
+    coordinates = []
+    n_boxes = len(data['text'])  # Number of detected elements
+    for i in range(n_boxes):
+        recognized_word = data['text'][i]
+        if recognized_word and word.lower() in recognized_word.lower():
+            x, y, w, h = (data['left'][i], data['top'][i], data['width'][i], data['height'][i])
+            coordinates.append((x, y, w, h))
+    return coordinates
+
+# Convert to grayscale and threshold the image without using built-in functions
+def convert_to_grayscale(image):
+    height, width, _ = image.shape
+    grayscale_image = np.zeros((height, width), dtype=np.uint8)
+    for i in range(height):
+        for j in range(width):
+            b, g, r = image[i, j]
+            grayscale_image[i, j] = (int(b) + int(g) + int(r)) // 3  # Simple average to get grayscale
+    return grayscale_image
+
+def apply_gaussian_blur(image, kernel_size=3, sigma=0.5):
+    kernel = np.zeros((kernel_size, kernel_size), dtype=np.float32)
+    offset = kernel_size // 2
+
+    # 생성된 커널로 가우시안 값 계산
+    for i in range(kernel_size):
+        for j in range(kernel_size):
+            x = i - offset
+            y = j - offset
+            kernel[i, j] = np.exp(-(x**2 + y**2) / (2 * sigma**2))
+    kernel /= (2 * np.pi * sigma**2)
+    kernel /= np.sum(kernel)  # 정규화
+
+    # 이미지에 커널 적용
+    height, width = image.shape
+    blurred_image = np.zeros_like(image, dtype=np.float32)
+    
+    for i in range(offset, height - offset):
+        for j in range(offset, width - offset):
+            region = image[i-offset:i+offset+1, j-offset:j+offset+1]
+            blurred_image[i, j] = np.sum(region * kernel)
+
+    return np.clip(blurred_image, 0, 255).astype(np.uint8)
+
+def erosion(image, kernel_size=2):
+    height, width = image.shape
+    offset = kernel_size // 2
+    eroded_image = np.zeros_like(image, dtype=np.uint8)
+
+    for i in range(offset, height - offset):
+        for j in range(offset, width - offset):
+            region = image[i-offset:i+offset+1, j-offset:j+offset+1]
+            if np.all(region == 255):
+                eroded_image[i, j] = 255
+            else:
+                eroded_image[i, j] = 0
+
+    return eroded_image
+
+def dilation(image, kernel_size=2):
+    height, width = image.shape
+    offset = kernel_size // 2
+    dilated_image = np.zeros_like(image, dtype=np.uint8)
+
+    for i in range(offset, height - offset):
+        for j in range(offset, width - offset):
+            region = image[i-offset:i+offset+1, j-offset:j+offset+1]
+            if np.any(region == 255):
+                dilated_image[i, j] = 255
+            else:
+                dilated_image[i, j] = 0
+
+    return dilated_image
+
+# 열림 연산: 침식 후 팽창
+def opening(image, kernel_size=2):
+    eroded = erosion(image, kernel_size)
+    opened_image = dilation(eroded, kernel_size)
+    return opened_image
+
+def apply_threshold(image, threshold_value=127):
+    height, width = image.shape
+    binary_image = np.zeros((height, width), dtype=np.uint8)
+    for i in range(height):
+        for j in range(width):
+            if image[i, j] > threshold_value:
+                binary_image[i, j] = 255
+            else:
+                binary_image[i, j] = 0
+    return binary_image
+
+# Function to find contours without recursion
+def find_contours(binary_image):
+    height, width = binary_image.shape
+    visited = np.zeros_like(binary_image, dtype=bool)
+    contours = []
+
+    def is_valid(x, y):
+        return 0 <= x < width and 0 <= y < height and binary_image[y, x] == 255 and not visited[y, x]
+
+    # Stack-based DFS to avoid recursion limit
+    def iterative_dfs(start_x, start_y):
+        stack = [(start_x, start_y)]
+        contour = []
+
+        while stack:
+            x, y = stack.pop()
+            if not is_valid(x, y):
+                continue
+
+            visited[y, x] = True
+            contour.append((x, y))
+
+            # Add neighboring pixels to the stack
+            neighbors = [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+            stack.extend(neighbors)
+
+        return contour
+
+    for y in range(height):
+        for x in range(width):
+            if is_valid(x, y):
+                contour = iterative_dfs(x, y)
+                if contour:
+                    contours.append(contour)
+
+    return contours
+
+# Custom function to draw a rectangle manually
+def draw_rectangle(image, top_left, bottom_right, color=(0, 0, 255), thickness=2):
+    x1, y1 = top_left
+    x2, y2 = bottom_right
+
+    if thickness <= 0:
+        thickness = 1
+
+    # Draw top and bottom lines
+    for t in range(thickness):
+        if y1 + t < image.shape[0]:
+            image[y1 + t, x1:x2] = color  # Top line
+        if y2 + t < image.shape[0]:
+            image[y2 + t, x1:x2] = color  # Bottom line
+
+    # Draw left and right lines
+    for t in range(thickness):
+        if x1 + t < image.shape[1]:
+            image[y1:y2, x1 + t] = color  # Left line
+        if x2 + t < image.shape[1]:
+            image[y1:y2, x2 + t] = color  # Right line
+
+# Custom implementation of Canny edge detection
+def apply_custom_canny_edge_detection(image, low_threshold=30, high_threshold=80):
+    height, width = image.shape
+
+    # Apply Sobel filter to get gradients
+    sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]])
+    sobel_y = np.array([[-1, -2, -1], [0, 0, 0], [1, 2, 1]])
+
+    gradient_x = np.zeros_like(image, dtype=np.float32)
+    gradient_y = np.zeros_like(image, dtype=np.float32)
+
+    for i in range(1, height - 1):
+        for j in range(1, width - 1):
+            region = image[i-1:i+2, j-1:j+2]
+            gradient_x[i, j] = np.sum(sobel_x * region)
+            gradient_y[i, j] = np.sum(sobel_y * region)
+
+    gradient_magnitude = np.sqrt(gradient_x**2 + gradient_y**2)
+    gradient_direction = np.arctan2(gradient_y, gradient_x)
+
+    # Non-maximum suppression
+    edges = np.zeros_like(image, dtype=np.uint8)
+    angle = gradient_direction * 180.0 / np.pi
+    angle = np.abs(angle) % 180
+
+    for i in range(1, height - 1):
+        for j in range(1, width - 1):
+            try:
+                q = 255
+                r = 255
+
+                # Angle 0
+                if (0 <= angle[i, j] < 22.5) or (157.5 <= angle[i, j] <= 180):
+                    q = gradient_magnitude[i, j + 1]
+                    r = gradient_magnitude[i, j - 1]
+                # Angle 45
+                elif 22.5 <= angle[i, j] < 67.5:
+                    q = gradient_magnitude[i + 1, j - 1]
+                    r = gradient_magnitude[i - 1, j + 1]
+                # Angle 90
+                elif 67.5 <= angle[i, j] < 112.5:
+                    q = gradient_magnitude[i + 1, j]
+                    r = gradient_magnitude[i - 1, j]
+                # Angle 135
+                elif 112.5 <= angle[i, j] < 157.5:
+                    q = gradient_magnitude[i - 1, j - 1]
+                    r = gradient_magnitude[i + 1, j + 1]
+
+                if (gradient_magnitude[i, j] >= q) and (gradient_magnitude[i, j] >= r):
+                    edges[i, j] = gradient_magnitude[i, j]
+                else:
+                    edges[i, j] = 0
+
+            except IndexError as e:
+                pass
+
+    # Hysteresis thresholding
+    strong = 80
+    weak = 30
+
+    edges = np.where(edges >= high_threshold, strong, np.where(edges >= low_threshold, weak, 0))
+
+    # Edge tracking by hysteresis
+    for i in range(1, height - 1):
+        for j in range(1, width - 1):
+            if edges[i, j] == weak:
+                if ((edges[i + 1, j - 1] == strong) or (edges[i + 1, j] == strong) or (edges[i + 1, j + 1] == strong)
+                        or (edges[i, j - 1] == strong) or (edges[i, j + 1] == strong)
+                        or (edges[i - 1, j - 1] == strong) or (edges[i - 1, j] == strong) or (edges[i - 1, j + 1] == strong)):
+                    edges[i, j] = strong
+                else:
+                    edges[i, j] = 0
+
+    return edges
+
+# Load the image using OpenCV
+image_path = r'C:\Users\homes\Downloads\Sample3.png'
+image = cv2.imread(image_path)
+if image is None:
+    raise ValueError("Image not found! Check the file path.")
+
+
+# Apply custom grayscale and threshold functions
+grayscale_image = convert_to_grayscale(image)
+blurred_image = apply_gaussian_blur(grayscale_image)  
+morphology_image = opening(blurred_image)  
+binary_image = apply_threshold(morphology_image)
+
+# Apply custom Canny edge detection
+edges = apply_custom_canny_edge_detection(binary_image)
+
+# Find contours in the edge-detected image
+contours = find_contours(edges)
+
+# Draw contours on the original image
+for contour in contours:
+    if len(contour) < 10:
+        continue  # Skip small noise-like contours
+    for point in contour:
+        image[point[1], point[0]] = (255, 255, 255)  # Mark contour points in white
+
+# Save the processed image
+preprocessed_image_path = r'C:\Users\homes\Downloads\preprocessed_image.png'
+cv2.imwrite(preprocessed_image_path, image)
+
+# Use Tesseract to extract text data without additional internal preprocessing
+output_base = "output"
+box_data = image_to_boxes_dict(preprocessed_image_path)
+
+# Extract text and metadata using custom function
+data = custom_image_to_data(preprocessed_image_path)
+
+# Search for a specific word and get its coordinates
+word_to_search = "task" # Replace with the word you want to find
+coordinates = get_word_coordinates(data, word_to_search)
+
+# Draw character-level bounding boxes
+for _, row in box_data.iterrows():
+    x1, y1, x2, y2 = row['left'], row['top'], row['right'], row['bottom']
+    y1_adjusted = image.shape[0] - y1
+    y2_adjusted = image.shape[0] - y2
+
+# Highlight found words in the image
+padding = 1  # Padding for word boxes
+for (x, y, w, h) in coordinates:
+    x -= padding
+    y -= padding
+    w += 2 * padding
+    h += 2 * padding
+    top_left = (x, y)
+    bottom_right = (x + w, y + h)
+    draw_rectangle(image, top_left, bottom_right, color=(0, 0, 255), thickness=2)
+
+# Display the processed image with both character-level and word-level boxes
+cv2.imshow('Highlighted Words', image)
+cv2.waitKey(0)
+cv2.destroyAllWindows() 
