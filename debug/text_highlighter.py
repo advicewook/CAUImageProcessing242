@@ -101,30 +101,7 @@ def get_word_coordinates(data, word):
     return coordinates
 
 
-def convert_to_grayscale(image):
-    height, width, _ = image.shape
-    grayscale_image = np.zeros((height, width), dtype=np.uint8)
-    for i in range(height):
-        for j in range(width):
-            b, g, r = image[i, j]
-            grayscale_image[i, j] = (int(b) + int(g) + int(r)) // 3  # Simple average to get grayscale
-    return grayscale_image
 
-def apply_adaptive_threshold(image, block_size=15, C=1):
-    height, width = image.shape
-    adaptive_thresh_image = np.zeros((height, width), dtype=np.uint8)
-    half_block = block_size // 2
-
-    for i in range(half_block, height - half_block):
-        for j in range(half_block, width - half_block):
-            local_region = image[i - half_block:i + half_block + 1, j - half_block:j + half_block + 1]
-            local_thresh = np.mean(local_region) - C
-            if image[i, j] > local_thresh:
-                adaptive_thresh_image[i, j] = 255
-            else:
-                adaptive_thresh_image[i, j] = 0
-
-    return adaptive_thresh_image
 
 # def highlight_text(image, top_left, bottom_right, color=(0, 255, 255), alpha=0.5):
 #     print("Highlighting text...")
@@ -178,37 +155,109 @@ def draw_rectangle(image, top_left, bottom_right, color=(0, 0, 255), thickness=1
             image[y1:y2, x2 + t] = color  # Right line
 
 
+def convert_to_grayscale(image):
+    height, width, _ = image.shape
+    grayscale_image = np.zeros((height, width), dtype=np.uint8)
+    for i in range(height):
+        for j in range(width):
+            b, g, r = image[i, j]
+            grayscale_image[i, j] = (int(b) + int(g) + int(r)) // 3  # Simple average to get grayscale
+    return grayscale_image
 
-def preprocess_image(image_path, script_dir):
-    # Load the image
-    image = cv2.imread(image_path)
+def median_filter(image, kernel_size=3):
+    half_k = kernel_size // 2
+    padded_image = np.pad(image, half_k, mode='edge')
+    height, width = image.shape
+    filtered_image = np.zeros_like(image)
     
-    # Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    for i in range(height):
+        for j in range(width):
+            local_region = padded_image[i:i+kernel_size, j:j+kernel_size]
+            filtered_image[i, j] = np.median(local_region)
     
-    # Apply Gaussian blur
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    return filtered_image
+
+
+def adaptive_threshold(image, block_size=15, C=1):
+    padded_image = np.pad(image, block_size // 2, mode='reflect')
+    thresholded = np.zeros_like(image)
+    for i in range(image.shape[0]):
+        for j in range(image.shape[1]):
+            local_region = padded_image[i:i+block_size, j:j+block_size]
+            local_threshold = np.mean(local_region) - C
+            thresholded[i, j] = 255 if image[i, j] > local_threshold else 0
+    return thresholded
+
+
+def simple_threshold(image, threshold_value=128):
+    height, width = image.shape
+    thresholded_image = np.zeros_like(image)
     
-    # Apply thresholding
-    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    for i in range(height):
+        for j in range(width):
+            if image[i, j] > threshold_value:
+                thresholded_image[i, j] = 255
+            else:
+                thresholded_image[i, j] = 0
+                
+    return thresholded_image
+
+def resize_image(image, scale_percent):
+    height, width = image.shape
+    new_height = int(height * scale_percent / 100)
+    new_width = int(width * scale_percent / 100)
+    resized_image = np.zeros((new_height, new_width), dtype=image.dtype)
     
-    # Deskew the image
-    coords = np.column_stack(np.where(binary > 0))
-    angle = cv2.minAreaRect(coords)[-1]
-    if angle < -45:
-        angle = -(90 + angle)
-    else:
-        angle = -angle
-    (h, w) = binary.shape[:2]
-    center = (w // 2, h // 2)
-    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-    deskewed = cv2.warpAffine(binary, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    for i in range(new_height):
+        for j in range(new_width):
+            x = i / (new_height / height)
+            y = j / (new_width / width)
+            
+            x0 = int(x)
+            x1 = min(x0 + 1, height - 1)
+            y0 = int(y)
+            y1 = min(y0 + 1, width - 1)
+            
+            a = x - x0
+            b = y - y0
+            
+            resized_image[i, j] = (1 - a) * (1 - b) * image[x0, y0] + a * (1 - b) * image[x1, y0] + (1 - a) * b * image[x0, y1] + a * b * image[x1, y1]
     
-    # Resize the image
-    resized = cv2.resize(deskewed, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    return resized_image
+
+
+
+#def preprocess_image(image_path, script_dir):
+#     # Load the image
+#     image = cv2.imread(image_path)
+    
+#     # Convert to grayscale
+#     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+#     # Apply Gaussian blur
+#     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+#     # Apply thresholding
+#     _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+#     # Deskew the image
+#     coords = np.column_stack(np.where(binary > 0))
+#     angle = cv2.minAreaRect(coords)[-1]
+#     if angle < -45:
+#         angle = -(90 + angle)
+#     else:
+#         angle = -angle
+#     (h, w) = binary.shape[:2]
+#     center = (w // 2, h // 2)
+#     M = cv2.getRotationMatrix2D(center, angle, 1.0)
+#     deskewed = cv2.warpAffine(binary, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    
+#     # Resize the image
+#     resized = cv2.resize(deskewed, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     
 
-    preprocessed_image_path = os.path.join(script_dir, 'preprocessed_image_pro.jpg')
-    cv2.imwrite(preprocessed_image_path, resized)   
+#     preprocessed_image_path = os.path.join(script_dir, 'preprocessed_image_pro.jpg')
+#     cv2.imwrite(preprocessed_image_path, resized)   
 
-    return preprocessed_image_path
+#     return preprocessed_image_path
+
