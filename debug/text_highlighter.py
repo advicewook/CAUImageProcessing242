@@ -92,7 +92,7 @@ def get_word_coordinates(data, word):
     n_boxes = len(data['text'])  # Number of detected elements
     for i in range(n_boxes):
         recognized_word = data['text'][i]
-        if recognized_word and word.lower() == recognized_word.lower():
+        if recognized_word and word.lower() in recognized_word.lower():
             x, y, w, h = (data['left'][i], data['top'][i], data['width'][i], data['height'][i])
             coordinates.append((x, y, w, h))
     
@@ -176,3 +176,39 @@ def draw_rectangle(image, top_left, bottom_right, color=(0, 0, 255), thickness=1
             image[y1:y2, x1 + t] = color  # Left line
         if x2 + t < image.shape[1]:
             image[y1:y2, x2 + t] = color  # Right line
+
+
+
+def preprocess_image(image_path, script_dir):
+    # Load the image
+    image = cv2.imread(image_path)
+    
+    # Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Apply Gaussian blur
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # Apply thresholding
+    _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # Deskew the image
+    coords = np.column_stack(np.where(binary > 0))
+    angle = cv2.minAreaRect(coords)[-1]
+    if angle < -45:
+        angle = -(90 + angle)
+    else:
+        angle = -angle
+    (h, w) = binary.shape[:2]
+    center = (w // 2, h // 2)
+    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+    deskewed = cv2.warpAffine(binary, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    
+    # Resize the image
+    resized = cv2.resize(deskewed, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    
+
+    preprocessed_image_path = os.path.join(script_dir, 'preprocessed_image_pro.jpg')
+    cv2.imwrite(preprocessed_image_path, resized)   
+
+    return preprocessed_image_path
