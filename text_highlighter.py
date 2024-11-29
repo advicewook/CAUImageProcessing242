@@ -2,11 +2,11 @@ import cv2
 import pandas as pd
 import subprocess
 import numpy as np
+import os
 
 # Path to Tesseract executable
 pytesseract_tesseract_cmd = r'C:\Users\homes\Downloads\Recognizer_Files\Recognizer\tes\tesseract.exe'
 
-# Function to run Tesseract and generate a .box file
 def run_tesseract(image_path, output_base, config='makebox'):
     box_file = f"{output_base}.box"
     command = [
@@ -18,7 +18,6 @@ def run_tesseract(image_path, output_base, config='makebox'):
     subprocess.run(command, check=True)
     return box_file
 
-# Function to parse .box files into a pandas DataFrame
 def parse_boxes(boxes_path):
     data = []
     with open(boxes_path, 'r') as file:
@@ -35,13 +34,11 @@ def parse_boxes(boxes_path):
                 })
     return pd.DataFrame(data)
 
-# Function to extract character positions using Tesseract's .box output
 def image_to_boxes_dict(image_path):
     output_base = "output"
     boxes_path = run_tesseract(image_path, output_base, config='makebox')
     return parse_boxes(boxes_path)
 
-# Function to replace pytesseract.image_to_data and extract text data
 def custom_image_to_data(image_path):
     command = [
         pytesseract_tesseract_cmd,
@@ -50,42 +47,60 @@ def custom_image_to_data(image_path):
         '--psm', '3',  # Page segmentation mode
         'tsv'  # Get data in TSV format
     ]
-    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-    tsv_output = result.stdout
 
-    # Parse TSV output into a pandas DataFrame
-    rows = tsv_output.strip().split("\n")
-    header = rows[0].split("\t")
+    try:
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        tsv_output = result.stdout.decode('utf-8', errors='ignore')  # Decode with utf-8, ignoring errors
+    except UnicodeDecodeError:
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        tsv_output = result.stdout.decode('latin-1', errors='ignore')  # Fallback to latin-1 if utf-8 fails
+
+    # Remove '\r' from each row
+    rows = [row.replace('\r', '') for row in tsv_output.strip().split("\n")]
     if len(rows) <= 1:
         print("Warning: No text detected by Tesseract.")
         return pd.DataFrame()  # Return empty DataFrame if no text detected
-    
+
+    header = rows[0].split("\t")
+    # print("Header:", header)  # Debugging: Print header to confirm column names
     data = [dict(zip(header, row.split("\t"))) for row in rows[1:] if len(row.split("\t")) == len(header)]
+
     df = pd.DataFrame(data)
 
-    # Convert numeric columns to appropriate types
     numeric_columns = ['left', 'top', 'width', 'height', 'conf', 'page_num']
     for col in numeric_columns:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
+    # Debugging: Print DataFrame columns
+    # print("DataFrame columns:", df.columns)
+    
     return df
 
-# Function to search for a word and get its bounding box from image data
+
 def get_word_coordinates(data, word):
     coordinates = []
+    # Debugging: Print DataFrame columns
+    # print("Data columns:", data.columns)
+    
     if 'text' not in data.columns:
         print("Warning: No 'text' column found in data.")
         return coordinates
     
+    
+
     n_boxes = len(data['text'])  # Number of detected elements
     for i in range(n_boxes):
         recognized_word = data['text'][i]
         if recognized_word and word.lower() in recognized_word.lower():
             x, y, w, h = (data['left'][i], data['top'][i], data['width'][i], data['height'][i])
             coordinates.append((x, y, w, h))
+    
+    print("Number of words detected:", len(coordinates))        
+    
     return coordinates
-# Convert to grayscale without using built-in functions
+
+
 def convert_to_grayscale(image):
     height, width, _ = image.shape
     grayscale_image = np.zeros((height, width), dtype=np.uint8)
@@ -95,7 +110,6 @@ def convert_to_grayscale(image):
             grayscale_image[i, j] = (int(b) + int(g) + int(r)) // 3  # Simple average to get grayscale
     return grayscale_image
 
-# Apply adaptive thresholding without using built-in functions
 def apply_adaptive_threshold(image, block_size=15, C=1):
     height, width = image.shape
     adaptive_thresh_image = np.zeros((height, width), dtype=np.uint8)
@@ -112,7 +126,73 @@ def apply_adaptive_threshold(image, block_size=15, C=1):
 
     return adaptive_thresh_image
 
-# Custom function to draw a rectangle manually
+# def highlight_text(image, top_left, bottom_right, color=(0, 255, 255), alpha=0.5):
+#     print("Highlighting text...")
+#     overlay = image.copy()
+#     output = image.copy()
+    
+#     cv2.rectangle(overlay, top_left, bottom_right, color, -1)
+#     cv2.addWeighted(overlay, alpha, output, 1 - alpha, 0, output)
+    
+#     return output
+
+def highlight_text(image, top_left, bottom_right, color=(0, 255, 255), alpha=0.5):
+    print("Highlighting text...")
+    overlay = image.copy()
+    output = image.copy()
+    
+    #draw_rectangle(overlay, top_left, bottom_right, color, -1)
+    for y in range(top_left[1], bottom_right[1]):
+        for x in range(top_left[0], bottom_right[0]):
+            if 0 <= y < overlay.shape[0] and 0 <= x < overlay.shape[1]:
+                overlay[y, x] = color  # Set the pixel color to highlight color
+    
+    # Add the overlay to the output image
+    for y in range(image.shape[0]):
+        for x in range(image.shape[1]):
+            if y >= top_left[1] and y < bottom_right[1] and x >= top_left[0] and x < bottom_right[0]:
+                output[y, x] = (alpha * overlay[y, x] + (1 - alpha) * output[y, x]).astype(np.uint8)
+    
+    return output
+
+def resize_image(image, scale_factor):
+    
+    # Get original image dimensions
+    height, width = image.shape[:2]
+    
+    # Calculate new image dimensions
+    new_width = int(width * scale_factor)
+    new_height = int(height * scale_factor)
+
+    # Create an empty array for the resized image (set to new size based on the scale factor)
+    
+    resized_image = np.zeros((new_height, new_width), dtype=image.dtype)
+
+    # Use bilinear interpolation to resize the image
+    for y in range(new_height):
+        for x in range(new_width):
+            # Calculate corresponding coordinates in the original image
+            original_x = x / scale_factor
+            original_y = y / scale_factor
+
+            # Separate the integer and fractional parts of the coordinates
+            x1 = int(original_x)
+            y1 = int(original_y)
+            x2 = min(x1 + 1, width - 1)
+            y2 = min(y1 + 1, height - 1)
+
+            # Calculate the fractional parts
+            dx = original_x - x1
+            dy = original_y - y1
+
+            # Compute the interpolated value using the four neighboring pixels
+            
+            f1 = (1 - dx) * image[y1, x1] + dx * image[y1, x2]
+            f2 = (1 - dx) * image[y2, x1] + dx * image[y2, x2]
+            resized_image[y, x] = int((1 - dy) * f1 + dy * f2)
+
+    return resized_image
+
 def draw_rectangle(image, top_left, bottom_right, color=(0, 0, 255), thickness=1):
     x1, y1 = top_left
     x2, y2 = bottom_right
@@ -133,43 +213,3 @@ def draw_rectangle(image, top_left, bottom_right, color=(0, 0, 255), thickness=1
             image[y1:y2, x1 + t] = color  # Left line
         if x2 + t < image.shape[1]:
             image[y1:y2, x2 + t] = color  # Right line
-
-# Load the image using OpenCV
-image_path = r'C:\Users\homes\Downloads\Sample2.png'
-image = cv2.imread(image_path)
-if image is None:
-    raise ValueError("Image not found! Check the file path.")
-
-
-
-grayscale_image = convert_to_grayscale(image)
-adaptive_threshold_image = apply_adaptive_threshold(grayscale_image)
-
-# Save the processed image
-preprocessed_image_path = r'C:\Users\homes\Downloads\preprocessed_image.jpg'
-cv2.imwrite(preprocessed_image_path, adaptive_threshold_image)
-
-# Use Tesseract to extract text data without additional internal preprocessing
-data = custom_image_to_data(preprocessed_image_path)
-
-
-
-# Search for a specific word and get its coordinates
-word_to_search = "spain" # Replace with the word you want to find
-coordinates = get_word_coordinates(data, word_to_search)
-
-# Highlight found words in the image
-padding = 1  # Padding for word boxes
-for (x, y, w, h) in coordinates:
-    x -= padding
-    y -= padding
-    w += 2 * padding
-    h += 2 * padding
-    top_left = (x, y)
-    bottom_right = (x + w, y + h)
-    draw_rectangle(image, top_left, bottom_right, color=(0, 0, 255), thickness=1)
-
-# Display the processed image with both character-level and word-level boxes
-cv2.imshow('Highlighted Words', image)
-cv2.waitKey(0)
-cv2.destroyAllWindows() 
