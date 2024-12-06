@@ -5,39 +5,7 @@ import numpy as np
 import os
 
 # Path to Tesseract executable
-pytesseract_tesseract_cmd = r'C:\Users\homes\Downloads\Recognizer_Files\Recognizer\tes\tesseract.exe'
-
-def run_tesseract(image_path, output_base, config='makebox'):
-    box_file = f"{output_base}.box"
-    command = [
-        pytesseract_tesseract_cmd,
-        image_path,
-        output_base,
-        config
-    ]
-    subprocess.run(command, check=True)
-    return box_file
-
-def parse_boxes(boxes_path):
-    data = []
-    with open(boxes_path, 'r') as file:
-        for line in file:
-            parts = line.split()
-            if len(parts) == 6:
-                data.append({
-                    'char': parts[0],
-                    'left': int(parts[1]),
-                    'bottom': int(parts[2]),
-                    'right': int(parts[3]),
-                    'top': int(parts[4]),
-                    'page_num': int(parts[5])
-                })
-    return pd.DataFrame(data)
-
-def image_to_boxes_dict(image_path):
-    output_base = "output"
-    boxes_path = run_tesseract(image_path, output_base, config='makebox')
-    return parse_boxes(boxes_path)
+pytesseract_tesseract_cmd = r'C:\Users\homes\main\Recognizer_Files\Recognizer\tes\tesseract.exe'
 
 def custom_image_to_data(image_path):
     command = [
@@ -76,6 +44,7 @@ def custom_image_to_data(image_path):
     # print("DataFrame columns:", df.columns)
     
     return df
+
 
 
 def get_word_coordinates(data, word):
@@ -193,23 +162,3 @@ def resize_image(image, scale_factor):
 
     return resized_image
 
-def draw_rectangle(image, top_left, bottom_right, color=(0, 0, 255), thickness=1):
-    x1, y1 = top_left
-    x2, y2 = bottom_right
-
-    if thickness <= 0:
-        thickness = 1
-
-    # Draw top and bottom lines
-    for t in range(thickness):
-        if y1 + t < image.shape[0]:
-            image[y1 + t, x1:x2] = color  # Top line
-        if y2 + t < image.shape[0]:
-            image[y2 + t, x1:x2] = color  # Bottom line
-
-    # Draw left and right lines
-    for t in range(thickness):
-        if x1 + t < image.shape[1]:
-            image[y1:y2, x1 + t] = color  # Left line
-        if x2 + t < image.shape[1]:
-            image[y1:y2, x2 + t] = color  # Right line
