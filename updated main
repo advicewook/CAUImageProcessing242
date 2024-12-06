@@ -1,6 +1,6 @@
 import cv2
 import os
-from text_highlighter import convert_to_grayscale, resize_image, apply_adaptive_threshold, custom_image_to_data, get_word_coordinates, highlight_text, subprocess, draw_rectangle
+from text_highlighter import convert_to_grayscale,resize_image, apply_adaptive_threshold, custom_image_to_data, get_word_coordinates, highlight_text, subprocess
 
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
